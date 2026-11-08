@@ -1,0 +1,167 @@
+name: Build headless packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if the version is unchanged and overwrite the release assets
+        type: boolean
+        default: false
+  schedule:
+    - cron: '23 2 * * *'   # check the upstream repository daily
+  push:
+    branches: [main]
+    paths:
+      - warp-headless-repack.sh
+      - ci/**
+      - .github/workflows/build.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+env:
+  # Distribution codenames and architectures to build (codenames must exist on pkg.cloudflareclient.com)
+  SUITES: jammy noble bookworm trixie
+  ARCHES: amd64 arm64
+
+jobs:
+  check:
+    name: Check upstream version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      build: ${{ steps.plan.outputs.build }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          versions=""
+          for s in $SUITES; do
+            v=$(SUITE=$s ARCH=amd64 ./warp-headless-repack.sh --version)
+            echo "$s: $v" | tee -a "$GITHUB_STEP_SUMMARY"
+            versions+="$v"$'\n'
+          done
+          tag="v$(printf '%s' "$versions" | sort -V | tail -n1)"
+
+          if [[ $GITHUB_EVENT_NAME == push ]]; then
+            build=true; why="build files changed"
+          elif [[ ${FORCE:-} == true ]]; then
+            build=true; why="forced rebuild"
+          elif ! gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            build=true; why="new upstream version"
+          else
+            build=false; why="already released, skipping"
+          fi
+          echo "$tag: $why" | tee -a "$GITHUB_STEP_SUMMARY"
+
+          inc=""
+          for s in $SUITES; do
+            case $s in
+              buster|bullseye|bookworm|trixie|forky) img=debian:$s ;;
+              *) img=ubuntu:$s ;;
+            esac
+            for a in $ARCHES; do
+              inc+="{\"suite\":\"$s\",\"arch\":\"$a\",\"image\":\"$img\"},"
+            done
+          done
+          {
+            echo "tag=$tag"
+            echo "build=$build"
+            echo "matrix={\"include\":[${inc%,}]}"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.suite }}-${{ matrix.arch }}
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.check.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download and repack
+        env:
+          SUITE: ${{ matrix.suite }}
+          ARCH: ${{ matrix.arch }}
+          OUT_DIR: out
+          MAINTAINER: ${{ github.repository_owner }} <${{ github.repository_owner_id }}+${{ github.repository_owner }}@users.noreply.github.com>
+        run: |
+          set -euo pipefail
+          ./warp-headless-repack.sh
+          f=$(ls out/*.deb)
+          ver=$(dpkg-deb -f "$f" Version)
+          # GitHub rewrites "+" in asset names, so use "-" in the file name
+          mv "$f" "out/cloudflare-warp_${ver//+/-}_${SUITE}_${ARCH}.deb"
+          ls -l out
+
+      - name: Set up QEMU
+        if: matrix.arch != 'amd64'
+        uses: docker/setup-qemu-action@v4
+
+      - name: Test install in ${{ matrix.image }}
+        run: |
+          docker run --rm --platform "linux/${{ matrix.arch }}" \
+            -v "$PWD/out:/out:ro" -v "$PWD/ci:/ci:ro" \
+            "${{ matrix.image }}" bash /ci/smoke-test.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb-${{ matrix.suite }}-${{ matrix.arch }}
+          path: out/*.deb
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  release:
+    name: Publish release
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: deb-*
+          merge-multiple: true
+          path: dist
+
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum *.deb > SHA256SUMS
+          {
+            echo "Unofficial repack of the Cloudflare WARP client from pkg.cloudflareclient.com, with the desktop GUI (warp-taskbar, Flutter runtime, WebKitGTK/AppIndicator dependencies) removed. Contains warp-svc, warp-cli, warp-diag and warp-dex."
+            echo
+            echo "| File | Depends |"
+            echo "|---|---|"
+            for f in *.deb; do
+              echo "| \`$f\` | $(dpkg-deb -f "$f" Depends) |"
+            done
+            echo
+            echo "Install with \`sudo apt install ./<file>.deb\`. Checksums are in \`SHA256SUMS\`."
+            echo
+            echo "Not affiliated with or endorsed by Cloudflare. See the README for details."
+          } > ../notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" *.deb SHA256SUMS --clobber
+            gh release edit "$TAG" --notes-file ../notes.md
+          else
+            gh release create "$TAG" *.deb SHA256SUMS \
+              --title "cloudflare-warp headless ${TAG#v}" \
+              --notes-file ../notes.md --target "$GITHUB_SHA"
+          fi
+          cat ../notes.md >> "$GITHUB_STEP_SUMMARY"
