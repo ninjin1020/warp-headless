@@ -24,8 +24,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Distribution codenames and architectures to build (codenames must exist on pkg.cloudflareclient.com)
-  SUITES: jammy noble bookworm trixie
+  # Distribution codenames and architectures to build: the Debian and Ubuntu releases
+  # Cloudflare lists as supported (codenames must exist on pkg.cloudflareclient.com)
+  SUITES: jammy noble resolute bookworm trixie
   ARCHES: amd64 arm64
 
 jobs:

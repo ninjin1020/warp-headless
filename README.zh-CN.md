@@ -14,29 +14,41 @@
 
 ## 提供的包
 
-GitHub Actions 为以下发行版打包：
+GitHub Actions 为 Cloudflare [官方列出的所有受支持的](https://developers.cloudflare.com/cloudflare-one/team-and-resources/devices/warp/download-warp/) Debian 和 Ubuntu 版本打包：
 
 | 发行版 | 代号 | 架构 |
 |---|---|---|
-| Ubuntu 22.04 | jammy | amd64、arm64 |
-| Ubuntu 24.04 | noble | amd64、arm64 |
+| Ubuntu 22.04 LTS | jammy | amd64、arm64 |
+| Ubuntu 24.04 LTS | noble | amd64、arm64 |
+| Ubuntu 26.04 LTS | resolute | amd64、arm64 |
 | Debian 12 | bookworm | amd64、arm64 |
 | Debian 13 | trixie | amd64、arm64 |
+
+Linux Mint、Pop!_OS 等 Ubuntu 衍生版可以使用其所基于的 Ubuntu 版本的包。
 
 Release 里的文件名格式为 `cloudflare-warp_<版本>-headless1_<代号>_<架构>.deb`，每个 release 都附带 `SHA256SUMS`。
 
 ## 安装
 
-从[最新 release](https://github.com/ninjin1020/warp-headless/releases/latest) 下载对应发行版的包，或者通过 GitHub API 下载：
+下面的命令会自动检测发行版和架构，从[最新 release](https://github.com/ninjin1020/warp-headless/releases/latest) 下载对应的包，校验后安装：
 
 ```bash
-SUITE=noble ARCH=amd64
+. /etc/os-release
+SUITE=${UBUNTU_CODENAME:-$VERSION_CODENAME}
+ARCH=$(dpkg --print-architecture)
 url=$(curl -fsSL https://api.github.com/repos/ninjin1020/warp-headless/releases/latest \
   | grep -o "https://[^\"]*_${SUITE}_${ARCH}\.deb" | head -n1)
-curl -fLO "$url"
-curl -fsSL https://github.com/ninjin1020/warp-headless/releases/latest/download/SHA256SUMS | sha256sum -c --ignore-missing
-sudo apt install "./${url##*/}"
+if [ -z "$url" ]; then
+  echo "No package for $SUITE/$ARCH. See the supported releases in the README."
+else
+  cd "$(mktemp -d)" &&
+  curl -fLO "$url" &&
+  curl -fsSL https://github.com/ninjin1020/warp-headless/releases/latest/download/SHA256SUMS | sha256sum -c --ignore-missing &&
+  sudo apt install -y "./${url##*/}"
+fi
 ```
+
+也可以手动下载对应版本的 `.deb`，然后用 `sudo apt install ./<文件名>.deb` 安装。
 
 `warp-cli` 和 `warp-svc` 的用法与官方包完全相同，请参阅 [Cloudflare WARP 客户端文档](https://developers.cloudflare.com/warp-client/)。
 

@@ -14,29 +14,41 @@ The binaries themselves are not modified.
 
 ## Packages
 
-GitHub Actions builds packages for these distributions:
+GitHub Actions builds packages for every Debian and Ubuntu release that Cloudflare [lists as supported](https://developers.cloudflare.com/cloudflare-one/team-and-resources/devices/warp/download-warp/):
 
 | Distribution | Codename | Architectures |
 |---|---|---|
-| Ubuntu 22.04 | jammy | amd64, arm64 |
-| Ubuntu 24.04 | noble | amd64, arm64 |
+| Ubuntu 22.04 LTS | jammy | amd64, arm64 |
+| Ubuntu 24.04 LTS | noble | amd64, arm64 |
+| Ubuntu 26.04 LTS | resolute | amd64, arm64 |
 | Debian 12 | bookworm | amd64, arm64 |
 | Debian 13 | trixie | amd64, arm64 |
+
+Ubuntu derivatives such as Linux Mint and Pop!_OS can use the package for the Ubuntu release they are based on.
 
 Release assets are named `cloudflare-warp_<version>-headless1_<codename>_<arch>.deb`. Each release includes a `SHA256SUMS` file.
 
 ## Install
 
-Download the package for your distribution from the [latest release](https://github.com/ninjin1020/warp-headless/releases/latest), or use the GitHub API:
+This detects your distribution and architecture, downloads the matching package from the [latest release](https://github.com/ninjin1020/warp-headless/releases/latest), verifies its checksum and installs it:
 
 ```bash
-SUITE=noble ARCH=amd64
+. /etc/os-release
+SUITE=${UBUNTU_CODENAME:-$VERSION_CODENAME}
+ARCH=$(dpkg --print-architecture)
 url=$(curl -fsSL https://api.github.com/repos/ninjin1020/warp-headless/releases/latest \
   | grep -o "https://[^\"]*_${SUITE}_${ARCH}\.deb" | head -n1)
-curl -fLO "$url"
-curl -fsSL https://github.com/ninjin1020/warp-headless/releases/latest/download/SHA256SUMS | sha256sum -c --ignore-missing
-sudo apt install "./${url##*/}"
+if [ -z "$url" ]; then
+  echo "No package for $SUITE/$ARCH. See the supported releases in the README."
+else
+  cd "$(mktemp -d)" &&
+  curl -fLO "$url" &&
+  curl -fsSL https://github.com/ninjin1020/warp-headless/releases/latest/download/SHA256SUMS | sha256sum -c --ignore-missing &&
+  sudo apt install -y "./${url##*/}"
+fi
 ```
+
+You can also download the `.deb` for your release manually and install it with `sudo apt install ./<file>.deb`.
 
 `warp-cli` and `warp-svc` work exactly as in the official package. See the [Cloudflare WARP client documentation](https://developers.cloudflare.com/warp-client/) for usage.
 

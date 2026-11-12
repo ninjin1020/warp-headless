@@ -10,7 +10,8 @@
 #   SUITE=noble ./warp-headless-repack.sh --version   # print the latest upstream version only
 #
 # Environment:
-#   SUITE       distribution codename on pkg.cloudflareclient.com (default: from /etc/os-release)
+#   SUITE       distribution codename on pkg.cloudflareclient.com (default: from /etc/os-release,
+#               preferring UBUNTU_CODENAME on Ubuntu derivatives)
 #   ARCH        amd64 or arm64 (default: dpkg --print-architecture)
 #   OUT_DIR     output directory (default: current directory)
 #   SUFFIX      appended to the upstream version (default: +headless1)
@@ -48,7 +49,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 # Fetch and verify the repository index; sets ver/file/sha
 fetch_index() {
-  SUITE=${SUITE:-$(. /etc/os-release && echo "${VERSION_CODENAME:-}")}
+  # UBUNTU_CODENAME is set on Ubuntu derivatives (Linux Mint, Pop!_OS, ...)
+  SUITE=${SUITE:-$(. /etc/os-release && echo "${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}")}
   ARCH=${ARCH:-$(dpkg --print-architecture)}
   [[ -n $SUITE ]] || die "cannot detect the distribution codename; set SUITE (noble, jammy, bookworm, ...)"
   log "reading $REPO index for $SUITE/$ARCH"
